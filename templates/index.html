@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Device Connectivity Monitor (ICMP)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root { --ok:#14b86a; --bad:#e03131; --card:#ffffff; --bg:#f5f7fb; --ink:#111827; --muted:#6b7280; }
+    body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial; background:var(--bg); color:var(--ink); }
+    .wrap { max-width: 1100px; margin: 24px auto; padding: 0 16px; }
+    h1 { margin: 0 0 16px; font-size: 24px; }
+    .topbar { display:flex; gap:12px; flex-wrap:wrap; align-items:center; justify-content:space-between; }
+    .stats { display:flex; gap:12px; flex-wrap:wrap; }
+    .pill { padding:6px 10px; border-radius:999px; background:#fff; box-shadow:0 1px 3px rgba(0,0,0,.07); font-size:14px; }
+    .pill.ok { color:var(--ok); }
+    .pill.bad { color:var(--bad); }
+    .card { background:var(--card); border-radius:14px; padding:16px; box-shadow:0 8px 24px rgba(0,0,0,.06); }
+    .grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap:12px; margin-top:12px; }
+    .row { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:12px; border-radius:12px; background:#fafbff; }
+    .meta { display:flex; flex-direction:column; gap:4px; overflow:hidden; }
+    .name { font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .sub { color:var(--muted); font-size:12px; }
+    .dot { width:12px; height:12px; border-radius:999px; display:inline-block; margin-right:8px; vertical-align:middle; }
+    .okdot { background:var(--ok); } .baddot { background:var(--bad); }
+    .actions { display:flex; gap:8px; }
+    button, input { font: inherit; }
+    .form { display:flex; gap:8px; flex-wrap:wrap; }
+    .form input { padding:10px 12px; border-radius:12px; border:1px solid #e5e7eb; background:#fff; min-width:220px; }
+    .btn { padding:10px 14px; border:none; border-radius:12px; cursor:pointer; }
+    .btn.primary { background:#111827; color:#fff; }
+    .btn.danger { background:#fee2e2; color:#b91c1c; }
+    .muted { color:var(--muted); font-size:12px; }
+    .footer { margin-top:10px; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; }
+    .table { margin-top:12px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="topbar">
+      <h1>Device Connectivity Monitor (ICMP)</h1>
+      <div class="stats">
+        <div class="pill ok" id="okCount">Online: 0</div>
+        <div class="pill bad" id="badCount">Offline: 0</div>
+        <div class="pill" id="totalCount">Total: 0</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <form class="form" id="addForm">
+        <input id="name" placeholder="Device name (e.g., PC-01)" required />
+        <input id="ip" placeholder="IP or host (e.g., 8.8.8.8)" required />
+        <button class="btn primary" type="submit">Add device</button>
+      </form>
+      <div class="footer">
+        <div class="muted" id="lastUpdated"></div>
+        <div class="muted">Auto-refresh every 10s</div>
+      </div>
+    </div>
+
+    <div class="grid" id="grid"></div>
+  </div>
+
+  <script>
+    const grid = document.getElementById("grid");
+    const okCount = document.getElementById("okCount");
+    const badCount = document.getElementById("badCount");
+    const totalCount = document.getElementById("totalCount");
+    const lastUpdated = document.getElementById("lastUpdated");
+
+    async function fetchJSON(url, opts) {
+      const res = await fetch(url, opts);
+      if (!res.ok) throw new Error(await res.text());
+      return res.json();
+    }
+
+    async function loadStatuses() {
+      const [devices, statuses] = await Promise.all([
+        fetchJSON("/api/devices"),
+        fetchJSON("/api/status")
+      ]);
+
+      // Index status by id for quick lookup
+      const statusById = {};
+      statuses.forEach(s => statusById[s.id] = s);
+
+      grid.innerHTML = "";
+      let online = 0, offline = 0;
+
+      devices.forEach(d => {
+        const s = statusById[d.id] || { online: false };
+        if (s.online) online++; else offline++;
+
+        const row = document.createElement("div");
+        row.className = "row";
+
+        const meta = document.createElement("div");
+        meta.className = "meta";
+        const name = document.createElement("div");
+        name.className = "name";
+        name.textContent = d.name;
+        const sub = document.createElement("div");
+        sub.className = "sub";
+        sub.textContent = d.ip;
+
+        meta.appendChild(name);
+        meta.appendChild(sub);
+
+        const right = document.createElement("div");
+        right.className = "actions";
+
+        const status = document.createElement("div");
+        const dot = document.createElement("span");
+        dot.className = "dot " + (s.online ? "okdot" : "baddot");
+        status.appendChild(dot);
+        const label = document.createElement("span");
+        label.textContent = s.online ? "Online" : "Offline";
+        status.appendChild(label);
+
+        const del = document.createElement("button");
+        del.className = "btn danger";
+        del.textContent = "Remove";
+        del.onclick = async () => {
+          if (confirm(`Remove ${d.name} (${d.ip})?`)) {
+            await fetchJSON(`/api/devices/${d.id}`, { method: "DELETE" });
+            refresh();
+          }
+        };
+
+        right.appendChild(status);
+        right.appendChild(del);
+
+        row.appendChild(meta);
+        row.appendChild(right);
+        grid.appendChild(row);
+      });
+
+      okCount.textContent = `Online: ${online}`;
+      badCount.textContent = `Offline: ${offline}`;
+      totalCount.textContent = `Total: ${online + offline}`;
+      lastUpdated.textContent = `Last updated: ${new Date().toLocaleString()}`;
+    }
+
+    async function addDevice(e) {
+      e.preventDefault();
+      const name = document.getElementById("name").value.trim();
+      const ip = document.getElementById("ip").value.trim();
+      if (!name || !ip) return;
+
+      await fetchJSON("/api/devices", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, ip })
+      });
+
+      document.getElementById("name").value = "";
+      document.getElementById("ip").value = "";
+      refresh();
+    }
+
+    const form = document.getElementById("addForm");
+    form.addEventListener("submit", addDevice);
+
+    let timer = null;
+    function refresh() {
+      if (timer) clearTimeout(timer);
+      loadStatuses().catch(err => console.error(err));
+      timer = setTimeout(refresh, 10000); // 10s
+    }
+    refresh();
+  </script>
+</body>
+</html>
